@@ -2,8 +2,10 @@ package builders
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/influx6/assets"
@@ -202,8 +204,8 @@ func JSBuildLauncher(config JSBuildConfig) flux.Reactor {
 		jsfile := fmt.Sprintf("%s.js", config.FileName)
 		jsmapfile := fmt.Sprintf("%s.js.map", config.FileName)
 
-		root.Reply(&fs.FileWrite{Data: js, Path: filepath.Join(config.Folder, jsfile)})
-		root.Reply(&fs.FileWrite{Data: jsmap, Path: filepath.Join(config.Folder, jsmapfile)})
+		root.Reply(&fs.FileWrite{Data: js.Bytes(), Path: filepath.Join(config.Folder, jsfile)})
+		root.Reply(&fs.FileWrite{Data: jsmap.Bytes(), Path: filepath.Join(config.Folder, jsmapfile)})
 	}))
 }
 
@@ -227,6 +229,9 @@ type RenderFile struct {
 	Path string
 	Data []byte
 }
+
+// ErrNotRenderFile is returned when a type is not a *RenderFile
+var ErrNotRenderFile = errors.New("Value Is Not a *RenderFile")
 
 // RenderMux defines a rendering function which takes what value it gets and spews a modded version
 type RenderMux func([]byte) []byte
@@ -262,7 +267,7 @@ func BlackMonday() flux.Reactor {
 func FileRead2RenderFile() flux.Reactor {
 	return flux.FlatSimple(func(root flux.Reactor, data interface{}) {
 		if fr, ok := data.(*fs.FileRead); ok {
-			root.Reply(&RenderFile{Path: fr.Path, Data: fr.Data.Bytes()})
+			root.Reply(&RenderFile{Path: fr.Path, Data: fr.Data})
 		}
 	})
 }
@@ -271,7 +276,138 @@ func FileRead2RenderFile() flux.Reactor {
 func FileWrite2RenderFile() flux.Reactor {
 	return flux.FlatSimple(func(root flux.Reactor, data interface{}) {
 		if fr, ok := data.(*fs.FileWrite); ok {
-			root.Reply(&RenderFile{Path: fr.Path, Data: fr.Data.Bytes()})
+			root.Reply(&RenderFile{Path: fr.Path, Data: fr.Data})
 		}
 	})
+}
+
+// RenderFile2FileWrite turns a RenderFile into a fs.FileWrite object
+func RenderFile2FileWrite() flux.Reactor {
+	return flux.FlatSimple(func(root flux.Reactor, data interface{}) {
+		if fr, ok := data.(*RenderFile); ok {
+			root.Reply(&fs.FileWrite{Path: fr.Path, Data: fr.Data})
+		}
+	})
+}
+
+// MarkConfig provides a config for turning inputs from file through a markdown preprocessor then
+// save this files with an extension change into the given folder
+type MarkConfig struct {
+	SaveDir  string                          // optional: path to save output files into but if empty,it uses the files own path original path
+	Ext      string                          //Optional: supply it incase you wish to change the file extension, else use a .md extension
+	Sanitize bool                            //Optional: if true will combine markdown and bluemonday together
+	PathMux  func(MarkConfig, string) string //Optional: if present will be used to generate the file path which gets its extension swapped and is used as the output filepath
+}
+
+// MarkFriday combines a fs.FilReader with a markdown processor which then pipes into a fs.FileWriter to save the output
+func MarkFriday(m MarkConfig) flux.Reactor {
+	if m.Ext == "" {
+		m.Ext = ".md"
+	}
+
+	var markdown flux.Reactor
+
+	if m.Sanitize {
+		markdown = BlackMonday()
+	} else {
+		markdown = BlackFriday()
+	}
+
+	reader := fs.FileReader()
+
+	// reader.React(flux.SimpleMuxer(func(root flux.Reactor, data interface{}) {
+	// 	log.Printf("reader %s", data)
+	// }), true)
+
+	writer := fs.FileWriter(func(path string) string {
+		var dir string
+
+		if m.PathMux != nil {
+			dir = m.PathMux(m, path)
+		} else {
+			//get the current directory of the path
+			cdir := filepath.Dir(path)
+
+			//if we have a preset folder replace it
+			if m.SaveDir != "" {
+				cdir = m.SaveDir
+			}
+
+			// strip out the directory from the path and only use the base name
+			base := filepath.Base(path)
+
+			//combine with the dir for the final path
+			dir = filepath.Join(cdir, base)
+		}
+
+		//grab our own extension
+		ext := strings.Replace(m.Ext, ".", "", -1)
+
+		//strip off the extension and add ours
+		return strings.Replace(dir, filepath.Ext(dir), fmt.Sprintf(".%s", ext), -1)
+	})
+
+	stack := flux.ReactStack(reader)
+	stack.Bind(FileRead2RenderFile(), true)
+	stack.Bind(markdown, true)
+	stack.Bind(RenderFile2FileWrite(), true)
+	stack.Bind(writer, true)
+
+	return stack
+}
+
+// MarkStreamConfig defines the configuration to be recieved by MarkFridayStream for auto-streaming markdown files
+type MarkStreamConfig struct {
+	InputDir  string
+	SaveDir   string
+	Ext       string
+	Sanitize  bool
+	Validator assets.PathValidator
+	Mux       assets.PathMux
+}
+
+// MarkFridayStream returns a flux.Reactor that takes the given config and generates a markdown auto-converter, when
+// it recieves any signals,it will stream down each file and convert the markdown input and save into the desired output path
+func MarkFridayStream(m MarkStreamConfig) (flux.Reactor, error) {
+	streamer, err := fs.StreamListings(fs.ListingConfig{
+		Path:      m.InputDir,
+		Validator: m.Validator,
+		Mux:       m.Mux,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	absPath, _ := filepath.Abs(m.InputDir)
+
+	markdown := MarkFriday(MarkConfig{
+		SaveDir:  m.SaveDir,
+		Ext:      m.Ext,
+		Sanitize: m.Sanitize,
+		PathMux: func(m MarkConfig, path string) string {
+			//we find the index of the absolute path we need to index
+			index := strings.Index(path, absPath)
+
+			// log.Printf("absolute: indexing path %s with %s -> %d", path, absPath, index)
+
+			//if we found one then strip the absolute path and combine with SaveDir
+			if index != -1 {
+				return filepath.Join(m.SaveDir, strings.Replace(path, absPath, "./", 1))
+			}
+
+			//we didnt find one so we find the base, backtrack a step,strip that off and combine with the SaveDir
+			base := filepath.Join(filepath.Base(path), "..")
+			index = strings.Index(path, base)
+
+			// log.Printf("fallback: indexing path %s with %s -> %d", path, base, index)
+
+			return filepath.Join(m.SaveDir, strings.Replace(path, base, "./", 1))
+		},
+	})
+
+	stack := flux.ReactStack(streamer)
+	stack.Bind(markdown, true)
+
+	return stack, nil
 }

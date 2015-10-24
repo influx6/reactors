@@ -9,6 +9,37 @@ import (
 	"github.com/influx6/flux"
 )
 
+func TestReader(t *testing.T) {
+	ws := new(sync.WaitGroup)
+	ws.Add(1)
+
+	read := FileReader()
+
+	read.React(func(r flux.Reactor, err error, ev interface{}) {
+		ws.Done()
+	}, true)
+
+	read.Send("./fs.go")
+	ws.Wait()
+	read.Close()
+}
+
+func TestWriter(t *testing.T) {
+	ws := new(sync.WaitGroup)
+	ws.Add(1)
+
+	read := FileWriter(nil)
+
+	read.React(func(r flux.Reactor, err error, ev interface{}) {
+		ws.Done()
+	}, true)
+
+	read.Send(&FileWrite{Path: "../fixtures/markdown/book.md", Data: []byte("# Book\n Write in love")})
+
+	ws.Wait()
+	read.Close()
+}
+
 func TestWatch(t *testing.T) {
 	ws := new(sync.WaitGroup)
 	ws.Add(2)
@@ -43,6 +74,7 @@ func TestWatchSet(t *testing.T) {
 	})
 
 	watcher.React(func(r flux.Reactor, err error, ev interface{}) {
+		// log.Printf("err: %s %s", err, ev)
 		ws.Done()
 	}, true)
 
@@ -57,4 +89,28 @@ func TestWatchSet(t *testing.T) {
 
 	ws.Wait()
 	watcher.Close()
+}
+
+func TestListStreaming(t *testing.T) {
+	ws := new(sync.WaitGroup)
+	ws.Add(5)
+
+	lists, err := StreamListings(ListingConfig{
+		Path:        "../builders",
+		DirAlso:     true,
+		UseRelative: true,
+	})
+
+	if err != nil {
+		flux.FatalFailed(t, "Failed to build list streamer", err)
+	}
+
+	lists.React(func(r flux.Reactor, err error, ev interface{}) {
+		// log.Printf("File: %s", ev)
+		ws.Done()
+	}, true)
+
+	lists.Send(true)
+	ws.Wait()
+	lists.Close()
 }
