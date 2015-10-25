@@ -8,6 +8,32 @@ import (
 	"github.com/influx6/gotask/fs"
 )
 
+func TestGoStream(t *testing.T) {
+	ws := new(sync.WaitGroup)
+	ws.Add(2)
+
+	mark, err := GoFridayStream(MarkStreamConfig{
+		InputDir: "../fixtures/markdown",
+		SaveDir:  "../fixtures/templates",
+		Ext:      ".tmpl",
+	})
+
+	if err != nil {
+		flux.FatalFailed(t, "Failed to build list streamer", err)
+	}
+
+	mark.React((func(root flux.Reactor, err error, data interface{}) {
+		if err != nil {
+			flux.FatalFailed(t, "Error  occured %+s", err)
+		}
+		ws.Done()
+	}), true)
+
+	mark.Send(true)
+	ws.Wait()
+	mark.Close()
+}
+
 func TestMarkdownStream(t *testing.T) {
 	ws := new(sync.WaitGroup)
 	ws.Add(2)
@@ -15,7 +41,7 @@ func TestMarkdownStream(t *testing.T) {
 	mark, err := MarkFridayStream(MarkStreamConfig{
 		InputDir: "../fixtures/markdown",
 		SaveDir:  "../fixtures/templates",
-		Ext:      ".tmpl",
+		Ext:      ".html",
 	})
 
 	if err != nil {

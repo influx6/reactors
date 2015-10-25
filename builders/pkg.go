@@ -109,7 +109,7 @@ func GobuildArgs(args []string) error {
 	return nil
 }
 
-// Gobuild runs the build process and returns true/false and an error
+// Gobuild runs the build process and returns true/false and an error, this works by building in the current root i.e cwd(current working directory)
 func Gobuild(dir, name string, args []string) error {
 	defer func() {
 		if err := recover(); err != nil {

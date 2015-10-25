@@ -1,5 +1,5 @@
 # BaseTransport
-  We have wondered where it will go.
+  We wondered where it will go.
 
   ```go
 

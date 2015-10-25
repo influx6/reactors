@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -58,6 +59,16 @@ type BuildConfig struct {
 	Args []string
 }
 
+func validateBuildConfig(b BuildConfig) {
+	if b.Name == "" {
+		panic("buildConfig.Name can not be empty,supply a name for the build")
+	}
+
+	if b.Path == "" {
+		panic("buildConfig.Path can not be empty,supply a path to store the build")
+	}
+}
+
 // GoBuilder calls `go run` with the command it receives from its data pipes, using the GoBuild function
 func GoBuilder() flux.Reactor {
 	return flux.Reactive(flux.SimpleMuxer(func(root flux.Reactor, data interface{}) {
@@ -71,10 +82,13 @@ func GoBuilder() flux.Reactor {
 
 // GoBuilderWith calls `go run` everysingle time to the provided path once a signal is received using the GoBuild function
 func GoBuilderWith(cmd BuildConfig) flux.Reactor {
+	validateBuildConfig(cmd)
 	return flux.Reactive(flux.SimpleMuxer(func(root flux.Reactor, _ interface{}) {
 		if err := Gobuild(cmd.Path, cmd.Name, cmd.Args); err != nil {
 			root.ReplyError(err)
+			return
 		}
+		root.Reply(true)
 	}))
 }
 
@@ -84,7 +98,9 @@ func GoArgsBuilder() flux.Reactor {
 		if cmd, ok := data.([]string); ok {
 			if err := GobuildArgs(cmd); err != nil {
 				root.ReplyError(err)
+				return
 			}
+			root.Reply(true)
 		}
 	}))
 }
@@ -94,7 +110,9 @@ func GoArgsBuilderWith(cmd []string) flux.Reactor {
 	return flux.Reactive(flux.SimpleMuxer(func(root flux.Reactor, _ interface{}) {
 		if err := GobuildArgs(cmd); err != nil {
 			root.ReplyError(err)
+			return
 		}
+		root.Reply(true)
 	}))
 }
 
@@ -137,10 +155,72 @@ func BinaryLauncher(bin string, args []string) flux.Reactor {
 			close(channel)
 			return
 		case <-time.After(0):
-			channel <- true
+			//force check of boolean values to ensure we can use correct signal
+			if cmd, ok := data.(bool); ok {
+				channel <- cmd
+			} else {
+				//TODO: should we fallback to sending true if we receive a signal normally? or remove this
+				channel <- true
+			}
 		}
 
 	}))
+}
+
+// BinaryBuildConfig defines a configuration to be passed into a BinaryBuildLuncher
+type BinaryBuildConfig struct {
+	Path      string
+	Name      string
+	BuildArgs []string //arguments to be used in building
+	RunArgs   []string //arguments to be used in running
+}
+
+func validateBinaryBuildConfig(b BinaryBuildConfig) {
+	if b.Name == "" {
+		panic("buildConfig.Name can not be empty,supply a name for the build")
+	}
+
+	if b.Path == "" {
+		panic("buildConfig.Path can not be empty,supply a path to store the build")
+	}
+}
+
+// BinaryBuildLuncher combines the builder and binary runner to provide a simple and order-based process,
+// the BinaryLauncher is only created to handling a binary lunching making it abit of a roundabout to time its response to wait until another process finishes, but BinaryBuildLuncher cleans out the necessity and provides a reactor that embedds the necessary call routines while still response the: Build->Run or StopRunning->Build->Run process in development
+func BinaryBuildLuncher(cmd BinaryBuildConfig) flux.Reactor {
+	validateBinaryBuildConfig(cmd)
+
+	// first generate the output file name from the config
+	var basename = cmd.Name
+
+	if runtime.GOOS == "windows" {
+		basename = fmt.Sprintf("%s.exe", basename)
+	}
+
+	binfile := filepath.Join(cmd.Path, basename)
+
+	//create the root stack which connects all the sequence of build and run together
+	buildStack := flux.ReactorStack()
+
+	//package builder
+	builder := GoBuilderWith(BuildConfig{Path: cmd.Path, Name: cmd.Name, Args: cmd.BuildArgs})
+
+	//package runner
+	runner := BinaryLauncher(binfile, cmd.RunArgs)
+
+	//when buildStack receives a signal, we will send a bool(false) signal to runner to kill the current process
+	buildStack.React(flux.SimpleMuxer(func(root flux.Reactor, data interface{}) {
+		//tell runner to kill process
+		runner.Send(false)
+		//forward the signal down the chain
+		root.Reply(data)
+	}), true)
+
+	//connect the build stack first then the runn stack to force order
+	buildStack.Bind(builder, true)
+	buildStack.Bind(runner, true)
+
+	return buildStack
 }
 
 // GoFileLauncher returns a new Task generator that builds a binary runner from the given properties, which causing a relaunch of a binary file everytime it recieves a signal,  it sends out a signal onces its done running all commands
@@ -179,6 +259,14 @@ type JSBuildConfig struct {
 
 // JSBuildLauncher returns a Task generator that builds a new jsbuild task giving the specific configuration and on every reception of signals rebuilds and sends off a FileWrite for each file i.e the js and js.map file
 func JSBuildLauncher(config JSBuildConfig) flux.Reactor {
+	if config.Package == "" {
+		panic("JSBuildConfig.Package can not be empty")
+	}
+
+	if config.FileName == "" {
+		config.FileName = "jsapp.build"
+	}
+
 	var session *JSSession
 	return flux.Reactive(flux.SimpleMuxer(func(root flux.Reactor, data interface{}) {
 		if session == nil {
@@ -207,6 +295,13 @@ func JSBuildLauncher(config JSBuildConfig) flux.Reactor {
 		root.Reply(&fs.FileWrite{Data: js.Bytes(), Path: filepath.Join(config.Folder, jsfile)})
 		root.Reply(&fs.FileWrite{Data: jsmap.Bytes(), Path: filepath.Join(config.Folder, jsmapfile)})
 	}))
+}
+
+// JSLauncher returns a reactor that on receiving a signal builds the gopherjs package as giving in the config and writes it out using a FileWriter
+func JSLauncher(config JSBuildConfig) flux.Reactor {
+	stack := flux.ReactStack(JSBuildLauncher(config))
+	stack.Bind(fs.FileWriter(nil), true)
+	return stack
 }
 
 // PackageWatcher generates a fs.Watch tasker which given a valid package name will retrieve the package directory and
@@ -290,13 +385,31 @@ func RenderFile2FileWrite() flux.Reactor {
 	})
 }
 
+// FileWriteMutator provides a function type that mutates and returns a fs.FileWrite object
+type FileWriteMutator func(w *fs.FileWrite) *fs.FileWrite
+
+var defaultMutateFileWrite = func(w *fs.FileWrite) *fs.FileWrite { return w }
+
+// MutateFileWrite turns a fs.FileWrite into a RenderFile object
+func MutateFileWrite(fx FileWriteMutator) flux.Reactor {
+	if fx == nil {
+		fx = defaultMutateFileWrite
+	}
+	return flux.FlatSimple(func(root flux.Reactor, data interface{}) {
+		if fr, ok := data.(*fs.FileWrite); ok {
+			root.Reply(fx(fr))
+		}
+	})
+}
+
 // MarkConfig provides a config for turning inputs from file through a markdown preprocessor then
 // save this files with an extension change into the given folder
 type MarkConfig struct {
-	SaveDir  string                          // optional: path to save output files into but if empty,it uses the files own path original path
-	Ext      string                          //Optional: supply it incase you wish to change the file extension, else use a .md extension
-	Sanitize bool                            //Optional: if true will combine markdown and bluemonday together
-	PathMux  func(MarkConfig, string) string //Optional: if present will be used to generate the file path which gets its extension swapped and is used as the output filepath
+	SaveDir     string                          // optional: path to save output files into but if empty,it uses the files own path original path
+	Ext         string                          //Optional: supply it incase you wish to change the file extension, else use a .md extension
+	Sanitize    bool                            //Optional: if true will combine markdown and bluemonday together
+	PathMux     func(MarkConfig, string) string //Optional: if present will be used to generate the file path which gets its extension swapped and is used as the output filepath
+	BeforeWrite FileWriteMutator
 }
 
 // MarkFriday combines a fs.FilReader with a markdown processor which then pipes into a fs.FileWriter to save the output
@@ -351,6 +464,7 @@ func MarkFriday(m MarkConfig) flux.Reactor {
 	stack.Bind(FileRead2RenderFile(), true)
 	stack.Bind(markdown, true)
 	stack.Bind(RenderFile2FileWrite(), true)
+	stack.Bind(MutateFileWrite(m.BeforeWrite), true)
 	stack.Bind(writer, true)
 
 	return stack
@@ -358,12 +472,13 @@ func MarkFriday(m MarkConfig) flux.Reactor {
 
 // MarkStreamConfig defines the configuration to be recieved by MarkFridayStream for auto-streaming markdown files
 type MarkStreamConfig struct {
-	InputDir  string
-	SaveDir   string
-	Ext       string
-	Sanitize  bool
-	Validator assets.PathValidator
-	Mux       assets.PathMux
+	InputDir    string
+	SaveDir     string
+	Ext         string
+	Sanitize    bool
+	Validator   assets.PathValidator
+	Mux         assets.PathMux
+	BeforeWrite FileWriteMutator
 }
 
 // MarkFridayStream returns a flux.Reactor that takes the given config and generates a markdown auto-converter, when
@@ -382,9 +497,10 @@ func MarkFridayStream(m MarkStreamConfig) (flux.Reactor, error) {
 	absPath, _ := filepath.Abs(m.InputDir)
 
 	markdown := MarkFriday(MarkConfig{
-		SaveDir:  m.SaveDir,
-		Ext:      m.Ext,
-		Sanitize: m.Sanitize,
+		SaveDir:     m.SaveDir,
+		Ext:         m.Ext,
+		Sanitize:    m.Sanitize,
+		BeforeWrite: m.BeforeWrite,
 		PathMux: func(m MarkConfig, path string) string {
 			//we find the index of the absolute path we need to index
 			index := strings.Index(path, absPath)
@@ -410,4 +526,20 @@ func MarkFridayStream(m MarkStreamConfig) (flux.Reactor, error) {
 	stack.Bind(markdown, true)
 
 	return stack, nil
+}
+
+// GoFridayStream combines the MarkFridayStream auto-coverter to create go template ready files from the output of processing markdown files
+func GoFridayStream(m MarkStreamConfig) (flux.Reactor, error) {
+	(&m).BeforeWrite = func(w *fs.FileWrite) *fs.FileWrite {
+		base := filepath.Base(w.Path)
+		ext := filepath.Ext(base)
+		base = strings.Replace(base, ext, "", -1)
+		mod := append([]byte(fmt.Sprintf(`{{define "%s"}}
+
+`, base)), w.Data...)
+		mod = append(mod, []byte("\n{{ end }}\n")...)
+		w.Data = mod
+		return w
+	}
+	return MarkFridayStream(m)
 }
