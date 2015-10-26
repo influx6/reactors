@@ -119,7 +119,15 @@ func Watch(m WatchConfig) flux.Reactor {
 					break
 				case ev, ok := <-wo.Events:
 					if ok {
-						root.Reply(ev)
+						file := filepath.Clean(ev.Name)
+						// stat, _ := os.Stat(file)
+						if (&m).Validator != nil {
+							if (&m).Validator(file, nil) {
+								root.Reply(ev)
+							}
+						} else {
+							root.Reply(ev)
+						}
 					}
 				case erx, ok := <-wo.Errors:
 					if ok {
@@ -252,9 +260,18 @@ func WatchSet(m WatchSetConfig) flux.Reactor {
 				case <-root.CloseNotify():
 					break
 				case ev, ok := <-wo.Events:
-					// log.Printf("events: %s", ev)
 					if ok {
-						root.Reply(ev)
+						if (&m).Validator != nil {
+							file := filepath.Clean(ev.Name)
+							// log.Printf("checking file: %s", file)
+							if (&m).Validator(file, nil) {
+								// log.Printf("passed file: %s", file)
+								root.Reply(ev)
+							}
+						} else {
+							// log.Printf("backdrop file: %s", ev)
+							root.Reply(ev)
+						}
 					}
 				case erx, ok := <-wo.Errors:
 					if ok {
@@ -366,6 +383,11 @@ func FileWriter(fx func(string) string) flux.Reactor {
 			// endpoint := filepath.Join(toPath, file.Path)
 
 			endpoint := fx(file.Path)
+			endpointDir := filepath.Dir(endpoint)
+
+			//make the directory part incase it does not exists
+			os.MkdirAll(endpointDir, 0700)
+
 			osfile, err := os.Create(endpoint)
 
 			if err != nil {
@@ -417,6 +439,11 @@ func FileAppender(fx func(string) string) flux.Reactor {
 			// endpoint := filepath.Join(toPath, file.Path)
 
 			endpoint := fx(file.Path)
+			endpointDir := filepath.Dir(endpoint)
+
+			//make the directory part incase it does not exists
+			os.MkdirAll(endpointDir, 0700)
+
 			osfile, err := os.Open(endpoint)
 
 			if err != nil {

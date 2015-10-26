@@ -162,10 +162,11 @@ func BinaryLauncher(bin string, args []string) flux.Reactor {
 			//force check of boolean values to ensure we can use correct signal
 			if cmd, ok := data.(bool); ok {
 				channel <- cmd
-			} else {
-				//TODO: should we fallback to sending true if we receive a signal normally? or remove this
-				channel <- true
+				return
 			}
+
+			//TODO: should we fallback to sending true if we receive a signal normally? or remove this
+			// channel <- true
 		}
 
 	}))
@@ -535,6 +536,10 @@ func MarkFridayStream(m MarkStreamConfig) (flux.Reactor, error) {
 
 // GoFridayStream combines the MarkFridayStream auto-coverter to create go template ready files from the output of processing markdown files
 func GoFridayStream(m MarkStreamConfig) (flux.Reactor, error) {
+	if (&m).Ext == "" {
+		(&m).Ext = ".tmpl"
+	}
+
 	(&m).BeforeWrite = func(w *fs.FileWrite) *fs.FileWrite {
 		base := filepath.Base(w.Path)
 		ext := filepath.Ext(base)
