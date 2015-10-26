@@ -252,7 +252,7 @@ func WatchSet(m WatchSetConfig) flux.Reactor {
 				case <-root.CloseNotify():
 					break
 				case ev, ok := <-wo.Events:
-					log.Printf("events: %s", ev)
+					// log.Printf("events: %s", ev)
 					if ok {
 						root.Reply(ev)
 					}
