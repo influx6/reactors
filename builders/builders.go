@@ -11,7 +11,7 @@ import (
 
 	"github.com/influx6/assets"
 	"github.com/influx6/flux"
-	"github.com/influx6/gotask/fs"
+	"github.com/influx6/reactors/fs"
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/russross/blackfriday"
 )
@@ -22,7 +22,9 @@ func GoInstaller() flux.Reactor {
 		if path, ok := data.(string); ok {
 			if err := GoDeps(path); err != nil {
 				root.ReplyError(err)
+				return
 			}
+			root.Reply(true)
 		}
 	}))
 }
@@ -32,7 +34,9 @@ func GoInstallerWith(path string) flux.Reactor {
 	return flux.Reactive(flux.SimpleMuxer(func(root flux.Reactor, _ interface{}) {
 		if err := GoDeps(path); err != nil {
 			root.ReplyError(err)
+			return
 		}
+		root.Reply(true)
 	}))
 }
 
@@ -185,9 +189,9 @@ func validateBinaryBuildConfig(b BinaryBuildConfig) {
 	}
 }
 
-// BinaryBuildLuncher combines the builder and binary runner to provide a simple and order-based process,
+// BinaryBuildLauncher combines the builder and binary runner to provide a simple and order-based process,
 // the BinaryLauncher is only created to handling a binary lunching making it abit of a roundabout to time its response to wait until another process finishes, but BinaryBuildLuncher cleans out the necessity and provides a reactor that embedds the necessary call routines while still response the: Build->Run or StopRunning->Build->Run process in development
-func BinaryBuildLuncher(cmd BinaryBuildConfig) flux.Reactor {
+func BinaryBuildLauncher(cmd BinaryBuildConfig) flux.Reactor {
 	validateBinaryBuildConfig(cmd)
 
 	// first generate the output file name from the config
@@ -211,6 +215,7 @@ func BinaryBuildLuncher(cmd BinaryBuildConfig) flux.Reactor {
 	//when buildStack receives a signal, we will send a bool(false) signal to runner to kill the current process
 	buildStack.React(flux.SimpleMuxer(func(root flux.Reactor, data interface{}) {
 		//tell runner to kill process
+		// log.Printf("sending to runner")
 		runner.Send(false)
 		//forward the signal down the chain
 		root.Reply(data)

@@ -170,6 +170,7 @@ func RunCMD(cmds []string, done func()) chan bool {
 					continue
 				}
 
+				fmt.Printf("--> Running Commands %s\n", cmds)
 				for _, cox := range cmds {
 
 					cmd := strings.Split(cox, " ")
@@ -183,7 +184,7 @@ func RunCMD(cmds []string, done func()) chan bool {
 					cmdo.Stderr = os.Stderr
 
 					if err := cmdo.Start(); err != nil {
-						log.Printf("-> -> Error executing command: %s -> %s", cmd, err)
+						fmt.Printf("---> Error executing command: %s -> %s\n", cmd, err)
 					}
 				}
 
@@ -224,22 +225,24 @@ func RunGo(gofile string, args []string, done, stopped func()) chan bool {
 				}
 
 				if err != nil {
-					log.Printf("Error in Sending Kill Signal %s", err)
+					fmt.Printf("---> Error in Sending Kill Signal %s\n", err)
 					proc.Kill()
 				}
 				proc.Wait()
+				proc = nil
 			}
 
 			if !dosig {
 				continue
 			}
 
+			fmt.Printf("--> Starting cmd: %s\n", cmdargs)
 			cmd := exec.Command("go", cmdargs...)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 
 			if err := cmd.Start(); err != nil {
-				log.Printf("Error starting process: %s", err)
+				fmt.Printf("---> Error starting process: %s\n", err)
 			}
 
 			proc = cmd.Process
@@ -274,22 +277,24 @@ func RunBin(binfile string, args []string, done, stopped func()) chan bool {
 				}
 
 				if err != nil {
-					log.Printf("Error in Sending Kill Signal %s", err)
+					fmt.Printf("---> Error in Sending Kill Signal: %s\n", err)
 					proc.Kill()
 				}
 				proc.Wait()
+				proc = nil
 			}
 
 			if !dosig {
 				continue
 			}
 
+			fmt.Printf("--> Starting bin: %s\n", binfile)
 			cmd := exec.Command(binfile, args...)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 
 			if err := cmd.Start(); err != nil {
-				log.Printf("Error starting process: %s", err)
+				fmt.Printf("---> Error starting process: %s -> %s\n", binfile, err)
 			}
 
 			proc = cmd.Process

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -165,27 +166,38 @@ func WatchSet(m WatchSetConfig) flux.Reactor {
 
 		var dirlistings []*assets.DirListing
 		var files []string
+		var dirsAdded = make(map[string]bool)
 
 		for _, path := range m.Path {
+			if dirsAdded[path] {
+				continue
+			}
+
 			stat, err := os.Stat(path)
 			if err != nil {
+				// log.Printf("stat error: %s", err)
 				root.ReplyError(err)
 				continue
 			}
 
 			if stat.IsDir() {
 				if dir, err := assets.DirListings(path, m.Validator, m.Mux); err == nil {
+					dirsAdded[path] = true
 					dirlistings = append(dirlistings, dir)
 				} else {
 					root.ReplyError(err)
 				}
 			} else {
-				files = append(files, path)
+				if !dirsAdded[filepath.Dir(path)] {
+					files = append(files, path)
+				}
 			}
 		}
 
 		if len(dirlistings) <= 0 && len(files) <= 0 {
-			root.Close()
+			log.Printf("no dirlistings, will close")
+			go root.Close()
+			log.Printf("no dirlistings, will close")
 			return
 		}
 
@@ -201,12 +213,24 @@ func WatchSet(m WatchSetConfig) flux.Reactor {
 					break
 				}
 
+				// var watched = make(map[string]bool)
 				//reload all concerned directories into watcher
 				for _, dir := range dirlistings {
 					dir.Listings.Wo.RLock()
 					for _, files := range dir.Listings.Tree {
+						// log.Printf("Checking folder: %s", files.Dir)
+						// if !watched[files.AbsDir] {
+						// watched[files.AbsDir] = true
 						wo.Add(files.AbsDir)
+						// }
+
 						files.Tree.Each(func(mod, real string) {
+							// if watched[real] {
+							// log.Printf("duplicate found %s -> %s -> %s", mod, real, files.AbsDir)
+							// return
+							// }
+
+							// watched[real] = true
 							rel, _ := filepath.Abs(real)
 							wo.Add(rel)
 							// if err != nil {
@@ -228,6 +252,7 @@ func WatchSet(m WatchSetConfig) flux.Reactor {
 				case <-root.CloseNotify():
 					break
 				case ev, ok := <-wo.Events:
+					log.Printf("events: %s", ev)
 					if ok {
 						root.Reply(ev)
 					}
