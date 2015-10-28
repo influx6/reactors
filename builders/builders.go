@@ -24,13 +24,14 @@ func BundleAssets(config *assets.BindFSConfig) (flux.Reactor, error) {
 		return nil, err
 	}
 
-	return flux.Reactive(flux.SimpleMuxer(func(root flux.Reactor, data interface{}) {
+	return flux.Reactive(func(root flux.Reactor, err error, data interface{}) {
+		// bindfs.Record()
 		if err := bindfs.Record(); err != nil {
 			root.ReplyError(err)
 			return
 		}
 		root.Reply(true)
-	})), nil
+	}), nil
 }
 
 // GoInstaller calls `go install` from the path it receives from its data pipes
