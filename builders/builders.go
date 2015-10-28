@@ -16,6 +16,23 @@ import (
 	"github.com/russross/blackfriday"
 )
 
+// BundleAssets creates a assets.BindFS, which when it receives any signal, updates the given file from its config
+func BundleAssets(config *assets.BindFSConfig) (flux.Reactor, error) {
+	bindfs, err := assets.NewBindFS(config)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return flux.Reactive(flux.SimpleMuxer(func(root flux.Reactor, data interface{}) {
+		if err := bindfs.Record(); err != nil {
+			root.ReplyError(err)
+			return
+		}
+		root.Reply(true)
+	})), nil
+}
+
 // GoInstaller calls `go install` from the path it receives from its data pipes
 func GoInstaller() flux.Reactor {
 	return flux.Reactive(flux.SimpleMuxer(func(root flux.Reactor, data interface{}) {
