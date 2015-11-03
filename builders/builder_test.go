@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/influx6/flux"
-	"github.com/influx6/gotask/fs"
+	"github.com/influx6/reactors/fs"
 )
 
 func TestGoStream(t *testing.T) {
