@@ -291,12 +291,13 @@ func JSBuildLauncher(config JSBuildConfig) flux.Reactor {
 		config.FileName = "jsapp.build"
 	}
 
-	var session *JSSession
+	// var session *JSSession
 	return flux.Reactive(flux.SimpleMuxer(func(root flux.Reactor, data interface{}) {
-		if session == nil {
-			session = NewJSSession(config.Tags, config.Verbose, false)
-		}
+		// if session == nil {
+		session := NewJSSession(config.Tags, config.Verbose, false)
+		// }
 
+		// session.Session.
 		//do we have an optional PackageDir that is not empty ? if so we use session.BuildDir
 		//else session.BuildPkg
 		var js, jsmap *bytes.Buffer
