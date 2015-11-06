@@ -93,7 +93,7 @@ func TestWatchSet(t *testing.T) {
 
 func TestListStreaming(t *testing.T) {
 	ws := new(sync.WaitGroup)
-	ws.Add(5)
+	ws.Add(9)
 
 	lists, err := StreamListings(ListingConfig{
 		Path:        "../builders",

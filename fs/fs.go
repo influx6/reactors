@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/go-fsnotify/fsnotify"
 	"github.com/influx6/assets"
 	"github.com/influx6/flux"
-	"gopkg.in/fsnotify.v1"
 )
 
 // WatchConfig provides configuration for the WatchDir and WatchFile tasks
