@@ -117,10 +117,10 @@ func BuildJS(jsession *JSSession, goPkgPath, name string, js, jsmap *bytes.Buffe
 	}
 
 	//build the package data for building
-	pkg := &build.PackageData{Package: buildpkg}
+	// pkg := &build.PackageData{Package: buildpkg}
 
 	//build the package using the sessios
-	if err = session.BuildPackage(pkg); err != nil {
+	if err = session.BuildPackage(buildpkg); err != nil {
 		return err
 	}
 
@@ -128,7 +128,7 @@ func BuildJS(jsession *JSSession, goPkgPath, name string, js, jsmap *bytes.Buffe
 	smfilter := &compiler.SourceMapFilter{Writer: js}
 	smsrc := &sourcemap.Map{File: name + ".js"}
 	smfilter.MappingCallback = build.NewMappingCallback(smsrc, options.GOROOT, options.GOPATH)
-	deps, err := compiler.ImportDependencies(pkg.Archive, session.ImportContext.Import)
+	deps, err := compiler.ImportDependencies(buildpkg.Archive, session.ImportContext.Import)
 
 	if err != nil {
 		return err

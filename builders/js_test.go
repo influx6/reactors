@@ -27,7 +27,7 @@ func TestJSPkgBundler(t *testing.T) {
 }
 
 func TestJSDirBundler(t *testing.T) {
-	js, jsmap, err := session.BuildDir("./jd", "github.com/influx6/reactors/builders/base", "base")
+	js, jsmap, err := session.BuildDir("./js", "github.com/influx6/reactors/builders/base", "base")
 
 	if err != nil {
 		flux.FatalFailed(t, "Error build gopherjs dir: %s", err)
